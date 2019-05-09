@@ -1,0 +1,10 @@
+(defun faktorial (n)
+  (if (= n 0)
+      1
+      (* n (faktorial (- n 1))) ) )
+
+
+(defun faktorial (n)
+   (loop for i from 1 to n
+         for fakt = 1 then (* fakt i)
+         finally return fakt))
