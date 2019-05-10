@@ -1,0 +1,527 @@
+<chapter xmlns="http://docbook.org/ns/docbook" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xi="http://www.w3.org/2001/XInclude" version="5.0" xml:lang="hu">
+    <info>
+        <title>Helló, Conway!</title>
+        <keywordset>
+            <keyword/>
+        </keywordset>
+    </info>
+    <section>
+        <title>Hangyaszimulációk</title>
+        <para>
+            Írj Qt C++-ban egy hangyaszimulációs programot, a forrásaidról utólag reverse engineering jelleggel
+            készíts UML osztálydiagramot is!
+        </para>
+        <para>
+            Megoldás videó: <link xlink:href="https://bhaxor.blog.hu/2018/10/10/myrmecologist">https://bhaxor.blog.hu/2018/10/10/myrmecologist</link>
+        </para>
+        <para>
+            Megoldás forrása: <link xlink:href="https://gitlab.com/nbatfai/bhax/tree/master/attention_raising/Myrmecologist">https://gitlab.com//nbatfai/bhax/tree/master/attention_raising/Myrmecologist</link><link xlink:href="https://bhaxor.blog.hu/2018/10/10/myrmecologist">https://bhaxor.blog.hu/2018/10/10/myrmecologist</link>
+        </para>
+        <para>
+        <mediaobject>
+        	<imageobject condition="printf">
+        		<imagedata fileref="img/hangya.png" format="PNG" scale="30"/>
+        	</imageobject>
+        </mediaobject>
+            
+        </para>
+        <para>
+            Ezt a feladatot a Qt segítségével oldjuk meg. Több fájlunk lesz, ezekből majd összeáll a programunk.A program egy hangyaszimuláció lesz. Egy képernyőt felosztunk kis négyzetekre és minden kis négyzet ami ki lesz szinezve egy hangyának felel meg.
+        </para> 
+        <para>
+        	Az ant.h fájlban lesz megadva az Ant osztály, ezek lesznek a hangyák. Minden hangyának lesz egy x és egy y koordinátája,illetve egy iránya, amit egy random számgenerálással fogunk megadni.Fontos megjegyezni,hogy ezek az adatok publikusak lesznek,azaz más függvények is elfogják érni ezeket.
+        </para>
+
+
+
+        
+        <para>
+        	 <programlisting language="c"><![CDATA[
+           
+  #include "antwin.h"
+#include <QDebug>
+
+AntWin::AntWin ( int width, int height, int delay, int numAnts,
+                 int pheromone, int nbhPheromon, int evaporation, int cellDef,
+                 int min, int max, int cellAntMax, QWidget *parent ) : QMainWindow ( parent )
+{
+    setWindowTitle ( "Ant Simulation" );
+
+    this->width = width;
+    this->height = height;
+    this->max = max;
+    this->min = min;
+
+    cellWidth = 6;
+    cellHeight = 6;
+
+    setFixedSize ( QSize ( width*cellWidth, height*cellHeight ) );
+
+    grids = new int**[2];
+    grids[0] = new int*[height];
+    for ( int i=0; i<height; ++i ) {
+        grids[0][i] = new int [width];
+    }
+    grids[1] = new int*[height];
+    for ( int i=0; i<height; ++i ) {
+        grids[1][i] = new int [width];
+    }
+
+    gridIdx = 0;
+    grid = grids[gridIdx];
+
+    for ( int i=0; i<height; ++i )
+        for ( int j=0; j<width; ++j ) {
+            grid[i][j] = cellDef;
+        }
+
+    ants = new Ants();
+
+    antThread = new AntThread ( ants, grids, width, height, delay, numAnts, pheromone,
+                                nbhPheromon, evaporation, min, max, cellAntMax);
+
+    connect ( antThread, SIGNAL ( step ( int) ),
+              this, SLOT ( step ( int) ) );
+
+    antThread->start();
+
+}
+
+void AntWin::paintEvent ( QPaintEvent* )
+{
+    QPainter qpainter ( this );
+
+    grid = grids[gridIdx];
+
+    for ( int i=0; i<height; ++i ) {
+        for ( int j=0; j<width; ++j ) {
+
+            double rel = 255.0/max;
+
+            qpainter.fillRect ( j*cellWidth, i*cellHeight,
+                                cellWidth, cellHeight,
+                                QColor ( 255 - grid[i][j]*rel,
+                                         255,
+                                         255 - grid[i][j]*rel) );
+
+            if ( grid[i][j] != min )
+            {
+                qpainter.setPen (
+                    QPen (
+                        QColor ( 255 - grid[i][j]*rel,
+                                 255 - grid[i][j]*rel, 255),
+                        1 )
+                );
+
+                qpainter.drawRect ( j*cellWidth, i*cellHeight,
+                                    cellWidth, cellHeight );
+            }
+
+
+
+            qpainter.setPen (
+                QPen (
+                    QColor (0,0,0 ),
+                    1 )
+            );
+
+            qpainter.drawRect ( j*cellWidth, i*cellHeight,
+                                cellWidth, cellHeight );
+
+        }
+    }
+
+    for ( auto h: *ants) {
+        qpainter.setPen ( QPen ( Qt::black, 1 ) );
+
+        qpainter.drawRect ( h.x*cellWidth+1, h.y*cellHeight+1,
+                            cellWidth-2, cellHeight-2 );
+
+    }
+
+    qpainter.end();
+}
+
+AntWin::~AntWin()
+{
+    delete antThread;
+
+    for ( int i=0; i<height; ++i ) {
+        delete[] grids[0][i];
+        delete[] grids[1][i];
+    }
+
+    delete[] grids[0];
+    delete[] grids[1];
+    delete[] grids;
+
+    delete ants;
+}
+
+void AntWin::step ( const int &gridIdx )
+{
+
+    this->gridIdx = gridIdx;
+    update();
+}
+  
+   ]]></programlisting>
+        </para>
+
+
+        <para>
+        	Az antwin.cpp-ben hozzuk létre magát az ablakot. Minden kis négyzet 6x6 pixel lesz.For ciklusok segítségével kirajzoltatjuk ezeket a négyzeteket és elkezdjük feltölteni őket hangyákkal.A kód végén felszabadítjuk a memóriát.
+        </para>
+        <para>
+        Az antthread.cpp fájlban adjuk meg a hangyák viselkedését. A sumNBHS függvénnyel tudjuk számonkövetni az egyes hangyák szomszédszámát.A newDir-el új irányt adunk a hangyáknak.Itt figyeljük a szomszédai viselkedését, ugyanis a hangyák feronom alapján követik egymást. A feronomot láthatjuk is futás közben először nagyon élesen majd egyre halványodik. A moveAnts függvénnyel tudjuk mozgatni a hangyákat.</para>    
+        <para>
+        	Az osztálydiagrammban az osztályokat és azok kapcsolatait lehet ábrázolni. Ennek a programnak a következő az osztálydiagrammja.
+        </para>   
+           <mediaobject>
+        	<imageobject condition="printf">
+        		<imagedata fileref="img/UML.png" format="PNG" scale="30"/>
+        	</imageobject>
+        </mediaobject>
+    </section>        
+    <section>
+        <title>Java életjáték</title>
+        <para>
+            Írd meg Java-ban a John Horton Conway-féle életjátékot, 
+            valósítsa meg a sikló-kilövőt!
+        </para>
+        <para>
+            Megoldás videó: 
+        </para>
+        <para>
+            Megoldás forrása: <link xlink:href=""></link>               
+        </para>
+        <para>
+            Tanulságok, tapasztalatok, magyarázat...
+        </para>            
+    </section>        
+    <section>
+        <title>Qt C++ életjáték</title>
+        <para>
+            Most Qt C++-ban!
+        </para>
+        <para>
+            Megoldás videó: 
+        </para>
+        <para>
+            Megoldás forrása: <link xlink:href="httsp://sourceforge.net/p/udprog/code/ci/master/tree/source/labor/Qt/Sejtauto">httsp://sourceforge.net/p/udprog/code/ci/master/tree/source/labor/Qt/Sejtauto</link>        
+        </para>
+        <para>
+            Ebben a feladatban ismét egy Qt-s projektet készítünk el.Most egy sejtautomatát fogunk készíteni C++-ban.
+            Ezeket a sejtautomatákat modellezésre használják.Egy ilyen program leggykoribb formája két dologból áll.Egy négyzetrács illetve a négyzetrácsban találhatóak a sejtek.A program futása során,ahogy telik az idő a sejtek változtatják állapotukat.
+        </para> 
+        
+                   
+        <para>
+        	Mi ebben a feladatban az egyik legismertebb ilyen sejtautomatával fogunk foglalkozni,a John Conway által kifejlesztett életjátékkal.
+        	Ennek a programnak háttere olyan lesz mint egy négyzetrácsos füzet,és minden sejtnek nyolc darab szomszédja lesz.Ebben a modellben a sejteknek két állapota lehet,vagy élőek vagy pedig halottak.A sejtek az idő múlásával megadott szabályok szerint fognak állapotot változtatni. Ezek a szabályok a következőek:
+        </para>
+        <para>-Egy olyan helyre ahol halott sejt van,de van 3 élő szomszédja, egy új sejt születik</para>
+        <para>-Egy olyan sejt amely él, és van legalább két élő szomszédja,az továbbra is élni fog</para>
+        <para>-Az összes többi sejt halott lesz</para>
+        <para>A program több fájlból fog állni.</para>
+        <para>
+        <programlisting language="c"><![CDATA[
+           
+   #include "sejtablak.h"
+
+SejtAblak::SejtAblak(int szelesseg, int magassag, QWidget *parent)
+    : QMainWindow(parent)
+{
+    setWindowTitle("A John Horton Conway-féle élatjáték");
+
+    this->magassag = magassag;
+    this->szelesseg = szelesseg;
+
+    QDesktopWidget *d = QApplication::desktop();
+
+    int sz = d->width();
+    int m = d->height();
+
+    cellaSzelesseg = sz/this->szelesseg;
+    cellaMagassag = m/this->magassag;
+
+    setFixedSize(QSize(this->szelesseg * cellaSzelesseg, this->magassag * cellaMagassag));
+    
+    racsok = new bool**[2];
+    racsok[0] = new bool*[this->magassag];
+    for(int i=0; i<this->magassag; ++i)
+        racsok[0][i] = new bool [this->szelesseg];
+    racsok[1] = new bool*[this->magassag];
+    for(int i=0; i<this->magassag; ++i)
+        racsok[1][i] = new bool [this->szelesseg];
+
+    racsIndex = 0;
+    racs = racsok[racsIndex];
+    
+    for(int i=0; i<this->magassag; ++i)
+        for(int j=0; j<this->szelesseg; ++j)
+            racs[i][j] = HALOTT;
+    
+    sikloKilovo(racs, 5, this->magassag-20);
+
+    eletjatek = new SejtSzal(racsok, this->szelesseg, this->magassag, 80, this);
+    eletjatek->start();
+
+}
+
+void SejtAblak::paintEvent(QPaintEvent*) {
+    QPainter qpainter(this);
+
+    cellaSzelesseg = size().width()/this->szelesseg;
+    cellaMagassag = size().height()/this->magassag;
+    bool **racs = racsok[racsIndex];
+    for(int i=0; i<magassag; ++i) { // végig lépked a sorokon
+        for(int j=0; j<szelesseg; ++j) { // s az oszlopok
+            // Sejt cella kirajzolása
+            if(racs[i][j] == ELO)
+                qpainter.fillRect(j*cellaSzelesseg, i*cellaMagassag,
+                                  cellaSzelesseg, cellaMagassag, Qt::black);
+            else
+                qpainter.fillRect(j*cellaSzelesseg, i*cellaMagassag,
+                                  cellaSzelesseg, cellaMagassag, Qt::white);
+            qpainter.setPen(QPen(Qt::gray, 1));
+
+            qpainter.drawRect(j*cellaSzelesseg, i*cellaMagassag,
+                              cellaSzelesseg, cellaMagassag);
+        }
+    }
+
+    qpainter.end();
+}
+
+SejtAblak::~SejtAblak()
+{
+    delete eletjatek;
+
+    for(int i=0; i<magassag; ++i) {
+        delete[] racsok[0][i];
+        delete[] racsok[1][i];
+    }
+
+    delete[] racsok[0];
+    delete[] racsok[1];
+    delete[] racsok;
+    ]]></programlisting>
+</para>
+    <para>A fenti kód a sejtablak.cpp. Ezzel hozzuk létre magát a sejtteret. Beállítjuk az ablak nevét, ezt fogja kiírni a program futásakor.A kód elején hivatkozunk a sejtablak.h file-ra, ebben található a sejtablak osztály. Ebben a kódban létrehozzuk a 100x75-ös ablakot.Valamint létrehozzuk a 6x6-os cellákat.Kezdetben minden cella üres lesz.Majd elindítjuk az életjátékot és ha egy sejt élő lesz akkor feketére festi az adott cellát,ha halott akkor pedig fehér marad.A siklokilovo függvény segítségével fognak a sejtek mozogni.
+    </para>
+    <para>
+    	<programlisting language="c"><![CDATA[
+    		#include "sejtszal.h"
+
+SejtSzal::SejtSzal(bool ***racsok, int szelesseg, int magassag, int varakozas, SejtAblak *sejtAblak)
+{
+    this->racsok = racsok;
+    this->szelesseg = szelesseg;
+    this->magassag = magassag;
+    this->varakozas = varakozas;
+    this->sejtAblak = sejtAblak;
+
+    racsIndex = 0;
+}
+
+
+int SejtSzal::szomszedokSzama(bool **racs,
+                              int sor, int oszlop, bool allapot) {
+    int allapotuSzomszed = 0;
+    
+    for(int i=-1; i<2; ++i)
+        for(int j=-1; j<2; ++j)
+            
+            if(!((i==0) && (j==0))) {
+                
+                int o = oszlop + j;
+                if(o < 0)
+                    o = szelesseg-1;
+                else if(o >= szelesseg)
+                    o = 0;
+
+                int s = sor + i;
+                if(s < 0)
+                    s = magassag-1;
+                else if(s >= magassag)
+                    s = 0;
+
+                if(racs[s][o] == allapot)
+                    ++allapotuSzomszed;
+            }
+
+    return allapotuSzomszed;
+}
+
+
+void SejtSzal::idoFejlodes() {
+
+    bool **racsElotte = racsok[racsIndex];
+    bool **racsUtana = racsok[(racsIndex+1)%2];
+
+    for(int i=0; i<magassag; ++i) { // sorok
+        for(int j=0; j<szelesseg; ++j) { // oszlopok
+
+            int elok = szomszedokSzama(racsElotte, i, j, SejtAblak::ELO);
+
+            if(racsElotte[i][j] == SejtAblak::ELO) {
+                
+                if(elok==2 || elok==3)
+                    racsUtana[i][j] = SejtAblak::ELO;
+                else
+                    racsUtana[i][j] = SejtAblak::HALOTT;
+            }  else {
+                
+                if(elok==3)
+                    racsUtana[i][j] = SejtAblak::ELO;
+                else
+                    racsUtana[i][j] = SejtAblak::HALOTT;
+            }
+        }
+    }
+    racsIndex = (racsIndex+1)%2;
+}
+
+
+
+void SejtSzal::run()
+{
+    while(true) {
+        QThread::msleep(varakozas);
+        idoFejlodes();
+        sejtAblak->vissza(racsIndex);
+    }
+
+}]]></programlisting>
+</para>
+<para>
+	Ez a másik fontos fájl, a sejtszal.cpp.Végigmegyünk for ciklusokkal az adott sejt összes szomszédján(magát kihagyva) és a Conway szabályok szerint figyeljük az állapotukat. Ha két vagy több élő szomszédja van akkor élő marad ha három élő szomszédja van akkor pedig halott marad.
+</para>
+<para>
+	A main.cpp ezeket a fájlokat fogja össze,igazából minden lényeges rész ezekben található meg.A fordítást a Qt-vel végezzük.
+</para>
+<mediaobject>
+        	<imageobject condition="printf">
+        		<imagedata fileref="img/sejt.png" format="PNG" scale="30"/>
+        	</imageobject>
+        </mediaobject>
+
+ </section> 
+ <section>
+
+        <title>BrainB Benchmark</title>
+        <para>
+        </para>
+        <para>
+            Megoldás videó: 
+        </para>
+        <para>
+            Megoldás forrása:  <link xlink:href="httsp://github.com/nbatfai/esport-talent-search">httsp://github.com/nbatfai/esport-talent-search</link>              
+        </para>
+        <para>
+Tutor:Kiss Máté
+</para>
+        <para>
+          Ez a projekt is egy Qt-s projekt lesz. Most egy kis koncentráció teszteléssel foglalkozunk. Ez a program azt fogja vizsgálni,hogy mennyi ideig tudjuk az egerünket egy megadott dolgon tartani, miközben az az adott dolog mozog illetve folyamatosan jelennek meg ugyanúgy kinéző dolgok a képernyőn. Tehát még arra is figyelnünk kell,hogy jó kis kört kövessünk. A kód az eredményt egy külön mappába fogja elmenteni, így figyelemmel kísérhetjük a fejlődésünket. 
+        </para>            
+        <para>
+        	Ez a program is több file-ból fog állni.Nézzük először a BrainBWin.cpp-t. Előszőr is kiíratjuk az ablakot, ezen belül lesz verziószámunk,illetve egy órát is jelzünk. A kód folyamatosan figyeli a signalokat, illetve követi az egérmozgását. Az egérmozgását csak akkor fogja figyelni ha levan nyomva a bal egérgomb.Ha nagyon messze kerül a kurzorunk a karaktertől akkor egy változóhoz hozzáfog adni egyet, ezt akkor fogja elmenteni ha több mint 12-szer fordul ilyen elő, ez majd beleszámít a végső pontunkba.A programban az S betű lenyomásával menteni tudunk, a P mint pause betűvel pedig szüneteltetni tudjuk a futását.
+        </para>
+        <para><programlisting language="c"><![CDATA[
+    		#include "BrainBThread.h"
+
+BrainBThread::BrainBThread ( int w, int h )
+{
+
+        dispShift = heroRectSize+heroRectSize/2;
+
+        this->w = w - 3 * heroRectSize;
+        this->h = h - 3 * heroRectSize;
+
+        std::srand ( std::time ( 0 ) );
+
+        Hero me ( this->w / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100,
+                  this->h / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100, 255.0 * std::rand() / ( RAND_MAX + 1.0 ), 9 );
+
+        Hero other1 ( this->w / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100,
+                      this->h / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100, 255.0 * std::rand() / ( RAND_MAX + 1.0 ), 5, "Norbi Entropy" );
+        Hero other2 ( this->w / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100,
+                      this->h / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100, 255.0 * std::rand() / ( RAND_MAX + 1.0 ), 3, "Greta Entropy" );
+        Hero other4 ( this->w / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100,
+                      this->h / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100, 255.0 * std::rand() / ( RAND_MAX + 1.0 ), 5, "Nandi Entropy" );
+        Hero other5 ( this->w / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100,
+                      this->h / 2 + 200.0 * std::rand() / ( RAND_MAX + 1.0 ) - 100, 255.0 * std::rand() / ( RAND_MAX + 1.0 ), 7, "Matyi Entropy" );
+
+        heroes.push_back ( me );
+        heroes.push_back ( other1 );
+        heroes.push_back ( other2 );
+        heroes.push_back ( other4 );
+        heroes.push_back ( other5 );
+
+}
+
+BrainBThread::~BrainBThread()
+{
+
+}
+
+void BrainBThread::run()
+{
+        while ( time < endTime ) {
+
+                QThread::msleep ( delay );
+
+                if ( !paused ) {
+
+                        ++time;
+
+                        devel();
+
+                }
+
+                draw();
+
+        }
+
+        emit endAndStats ( endTime );
+
+}
+
+void BrainBThread::pause()
+{
+
+        paused = !paused;
+        if ( paused ) {
+                ++nofPaused;
+        }
+
+}
+
+void BrainBThread::set_paused ( bool p )
+{
+
+        if ( !paused && p ) {
+                ++nofPaused;
+        }
+
+        paused = p;
+
+}
+
+]]></programlisting>
+        	</para>
+        	<para>
+        		A másik fontos fájl a BrainBThread.cpp.Ebben létrehozzuk az 5 hőst, az egyik mi leszünk. Ezeknek mindnek meghatározzuk a koordinátájukat.A run eljárással fogjuk indítani a program futását, valamint ebben a kódban figyelünk arra is,hogy az adott képfrissítések ne legyenek túl gyorsak az emberi szemnek.A BrainBThread.h-ban van megadva a mi hősünk, Samu néven, nekünk ezen a hősön kell tartani a program futása során a kurzorunkat. A mérést nehezíti,hogy a másik négy hőst  a mi hősünkhöz nagyon közel tesszük le, ezért nehéz lehet követni.
+        	</para>
+        	<mediaobject>
+        	<imageobject condition="printf">
+        		<imagedata fileref="img/BrainB.png" format="PNG" scale="30"/>
+        	</imageobject>
+        </mediaobject>
+
+    </section> 
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+</chapter>                
+ 
